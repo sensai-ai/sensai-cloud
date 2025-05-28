@@ -5,6 +5,11 @@ export async function createConversation() {
   return res.data;
 }
 
+export async function getLatestConversationId() {
+  const res = await api.get("conversations/latest-id");
+  return res.data;
+}
+
 export async function getConversationById(id:string){
   const res = await api.get(`conversations/${id}`);
   return res.data

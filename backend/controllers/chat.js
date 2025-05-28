@@ -1,8 +1,43 @@
 import supabase from "../config/db.js";
 
+async function getLatestConversationId(req, res) {
+  let latestConvo;
+  try {
+    const { data, error } = await supabase
+      .from("conversation_sessions")
+      .select("id")
+      // .eq("user_id", userId)
+      .order("updated_at", { ascending: false })
+      .limit(1);
+
+    if (error) throw new Error(error.message);
+    if (data.length === 0) {
+      const initialTitle = req.body.initialTitle || "New Chat";
+      console.log({ body: req.body });
+      const { data: convos, error } = await supabase
+        .from("conversation_sessions")
+        .insert([
+          {
+            title: initialTitle,
+          },
+        ])
+        .select("id")
+        .single();
+      if (error) throw new Error(error.message);
+      latestConvo = convos[0];
+    } else {
+      latestConvo = data[0];
+    }
+
+    res.status(200).json({conversationId:latestConvo.id});
+  } catch (error) {
+    res.status(400).json({ error: { message: error.message } });
+  }
+}
+
 async function createConversation(req, res) {
-  const  initialTitle  = req.body.initialTitle || "New Chat";
-  console.log({body:req.body})
+  const initialTitle = req.body.initialTitle || "New Chat";
+  console.log({ body: req.body });
   try {
     const { data, error } = await supabase
       .from("conversation_sessions")
@@ -151,4 +186,5 @@ export {
   deleteConversation,
   togglePinConversation,
   getConversationById,
+  getLatestConversationId
 };
