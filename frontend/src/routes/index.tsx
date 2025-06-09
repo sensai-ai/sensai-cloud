@@ -7,6 +7,7 @@ export default function MainRoutes() {
     <Routes>
       <Route path="/" element={<Layout />}>
         <Route path=":conversationId" element={<ChatPage />} />
+<Route path="new-chat" element={<ChatPage isNewChat />} />
       </Route>
     </Routes>
   );

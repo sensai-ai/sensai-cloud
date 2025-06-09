@@ -6,12 +6,8 @@ import { Separator } from "@/components/ui/separator";
 import {
   Plus,
   Settings,
-  History,
-  HelpCircle,
   Sun,
   Moon,
-  ChevronLeft,
-  ChevronRight,
   Loader2,
   PanelRight,
   PanelLeft,
@@ -46,15 +42,8 @@ function Sidebar() {
     fetchChatHistory();
   }, []);
 
-  const handleNewChatClick = async () => {
-    setIsCreatingChat(true);
-    try {
-      const newConvo = await createConversation();
-      await fetchChatHistory();
-      navigate(`/${newConvo.id}`);
-    } finally {
-      setIsCreatingChat(false);
-    }
+  const handleNewChatClick = () => {
+    navigate("/new-chat");
   };
 
   const toggleTheme = () => {
@@ -112,7 +101,7 @@ function Sidebar() {
               variant="ghost"
               className={`w-full justify-start ${isCollapsed ? "px-2" : ""}`}
             >
-              <Bot  className="h-4 w-4" />
+              <Bot className="h-4 w-4" />
               {shouldShowContent && !isCollapsed && (
                 <span className="ml-2">Agents</span>
               )}
@@ -144,7 +133,6 @@ function Sidebar() {
                 <span className="ml-2">Workflows</span>
               )}
             </Button>
- 
           </div>
 
           <div className="px-4">

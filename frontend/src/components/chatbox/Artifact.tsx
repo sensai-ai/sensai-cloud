@@ -1,12 +1,11 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import {
   Download,
   ChevronLeft,
   ChevronRight,
-  RefreshCw,
   Expand,
   X,
-  Save,
+  Copy,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -34,6 +33,10 @@ import {
   Tooltip as ChartToolTip,
   Legend,
 } from "chart.js";
+
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism"; // You can change the theme
+import { toast } from "sonner";
 
 // Register ChartJS components
 ChartJS.register(
@@ -73,7 +76,7 @@ const BarChart = ({ artifact }: { artifact: ArtifactData }) => {
     ],
   };
 
-  console.log({data})
+  console.log({ data });
 
   const options = {
     responsive: true,
@@ -138,27 +141,46 @@ export type ArtifactData = {
 };
 
 type ArtifactProps = {
-  artifact: ArtifactData | null;
+  artifacts: ArtifactData[] | null;
   onClose: () => void;
   className?: string;
 };
 
-export function Artifact({ artifact, onClose, className = "" }: ArtifactProps) {
+export function Artifact({
+  artifacts,
+  onClose,
+  className = "",
+}: ArtifactProps) {
   const [activeTab, setActiveTab] = useState("graph");
   const [isExpanded, setIsExpanded] = useState(false);
+  const [selectedArtifactIndex, setSelectedArtifactIndex] = useState<number>(0);
 
-  if (!artifact) return null;
+  if (!artifacts) return null;
 
   const handleTabChange = (tab: string) => {
     setActiveTab(tab);
   };
 
+  function moveToNextArtifact() {
+    if (!artifacts) return;
+    if (selectedArtifactIndex === artifacts?.length - 1) return;
+    setSelectedArtifactIndex((prev) => prev + 1);
+  }
+
+  function moveToPrevArtifact() {
+    if (!artifacts) return;
+    if (selectedArtifactIndex === 0) return;
+    setSelectedArtifactIndex((prev) => prev - 1);
+  }
+
   const downloadCSV = () => {
     // Convert data to CSV format
-    const headers = artifact.columns.join(",");
-    const rows = artifact.data_samples
+    const headers = artifacts[selectedArtifactIndex].columns.join(",");
+    const rows = artifacts[selectedArtifactIndex].data_samples
       .map((row) =>
-        artifact.columns.map((col) => JSON.stringify(row[col])).join(","),
+        artifacts[selectedArtifactIndex].columns
+          .map((col) => JSON.stringify(row[col]))
+          .join(","),
       )
       .join("\n");
 
@@ -168,7 +190,7 @@ export function Artifact({ artifact, onClose, className = "" }: ArtifactProps) {
 
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${artifact.name.replace(/ /g, "_")}.csv`;
+    a.download = `${artifacts[selectedArtifactIndex].name.replace(/ /g, "_")}.csv`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -177,7 +199,7 @@ export function Artifact({ artifact, onClose, className = "" }: ArtifactProps) {
 
   return (
     <div
-      className={`flex flex-col border rounded-lg bg-background overflow-hidden ${className} ${isExpanded ? "fixed inset-0 z-50 m-2" : "h-full"}`}
+      className={`flex flex-col border rounded-lg w-[40%] bg-background overflow-scroll ${className} "max-h-[100vh]"`}
     >
       {/* Header */}
       <div className="flex items-center justify-between p-2 border-b">
@@ -189,13 +211,20 @@ export function Artifact({ artifact, onClose, className = "" }: ArtifactProps) {
               className="h-5 w-5"
             />
           </div>
-          <h2 className="text-sm font-medium line-clamp-1">{artifact.name}</h2>
+          <h2 className="text-sm font-medium line-clamp-1">
+            {artifacts[selectedArtifactIndex].name}
+          </h2>
         </div>
 
         <div className="flex items-center gap-1">
           <Tooltip>
-            <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-8 w-8">
+            <TooltipTrigger disabled={selectedArtifactIndex === 0} asChild>
+              <Button
+                onClick={moveToPrevArtifact}
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+              >
                 <ChevronLeft className="h-4 w-4" />
               </Button>
             </TooltipTrigger>
@@ -203,8 +232,16 @@ export function Artifact({ artifact, onClose, className = "" }: ArtifactProps) {
           </Tooltip>
 
           <Tooltip>
-            <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-8 w-8">
+            <TooltipTrigger
+              disabled={selectedArtifactIndex === artifacts?.length - 1}
+              asChild
+            >
+              <Button
+                onClick={moveToNextArtifact}
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+              >
                 <ChevronRight className="h-4 w-4" />
               </Button>
             </TooltipTrigger>
@@ -224,7 +261,6 @@ export function Artifact({ artifact, onClose, className = "" }: ArtifactProps) {
             </TooltipTrigger>
             <TooltipContent>Download data</TooltipContent>
           </Tooltip>
-
 
           <Tooltip>
             <TooltipTrigger asChild>
@@ -259,7 +295,7 @@ export function Artifact({ artifact, onClose, className = "" }: ArtifactProps) {
       </div>
 
       {/* Body */}
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex-1 flex flex-col ">
         {/* Tabs and Actions */}
         <Tabs
           value={activeTab}
@@ -274,21 +310,17 @@ export function Artifact({ artifact, onClose, className = "" }: ArtifactProps) {
               <TabsTrigger value="table" className="h-7 text-xs">
                 Table
               </TabsTrigger>
-              <TabsTrigger value="code" className="h-7 text-xs">
-                Code
-              </TabsTrigger>
               <TabsTrigger value="query" className="h-7 text-xs">
                 Query
               </TabsTrigger>
             </TabsList>
-
-                      </div>
+          </div>
 
           {/* Content */}
           <div className="flex-1 overflow-hidden">
             <TabsContent value="graph" className="h-full m-0">
-              {artifact.data_samples.length > 0 ? (
-                <BarChart artifact={artifact} />
+              {artifacts[selectedArtifactIndex].data_samples.length > 0 ? (
+                <BarChart artifact={artifacts[selectedArtifactIndex]} />
               ) : (
                 <div className="h-full p-4 flex items-center justify-center bg-muted/50">
                   <div className="text-center">
@@ -300,60 +332,88 @@ export function Artifact({ artifact, onClose, className = "" }: ArtifactProps) {
               )}
             </TabsContent>
             <TabsContent value="table" className="h-full m-0">
-              <ScrollArea className="h-full">
-                <Table className="border-b">
-                  <TableHeader className="sticky top-0 bg-background">
-                    <TableRow>
-                      {artifact.columns.map((column,index) => (
-                        <TableHead key={index} className="px-4 py-2">
-                          {column}
-                        </TableHead>
-                      ))}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {artifact.data_samples.map((row, rowIndex) => (
-                      <TableRow key={rowIndex}>
-                        {artifact.columns.map((column) => (
-                          <TableCell
-                            key={`${rowIndex}-${column}`}
-                            className="px-4 py-2"
-                          >
-                            {String(row[column])}
-                          </TableCell>
-                        ))}
+              <ScrollArea className="max-h-[85vh] overflow-scroll">
+                <div className="w-full overflow-x-scroll">
+                <div className="min-w-max">
+                  <Table className="border-b  ">
+                    <TableHeader className="sticky top-0 bg-background">
+                      <TableRow>
+                        {artifacts[selectedArtifactIndex].columns.map(
+                          (column, index) => (
+                            <TableHead key={index} className="px-4 py-2">
+                              {column}
+                            </TableHead>
+                          ),
+                        )}
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-                <div className="p-2 text-xs text-muted-foreground text-center">
-                  Showing {artifact.data_samples.length} of {artifact.row_count}{" "}
-                  rows
-                </div>
-              </ScrollArea>
-            </TabsContent>
-            <TabsContent value="code" className="h-full m-0">
-              <ScrollArea className="h-full p-4">
-                <div className="bg-muted rounded-md p-4">
-                  <pre className="text-sm">
-                    <code>
-                      {`# Visualization code would appear here\n`}
-                      {`# Using ${artifact.visualization_type.join(", ")} charts\n`}
-                      {`# Data source: ${artifact.name}`}
-                    </code>
-                  </pre>
+                    </TableHeader>
+                    <TableBody>
+                      {artifacts[selectedArtifactIndex].data_samples.map(
+                        (row, rowIndex) => (
+                          <TableRow key={rowIndex}>
+                            {artifacts[selectedArtifactIndex].columns.map(
+                              (column) => (
+                                <TableCell
+                                  key={`${rowIndex}-${column}`}
+                                  className="px-4 py-2"
+                                >
+                                  {String(row[column])}
+                                </TableCell>
+                              ),
+                            )}
+                          </TableRow>
+                        ),
+                      )}
+                    </TableBody>
+                  </Table>
+                  <div className="p-2 text-xs text-muted-foreground text-center">
+                    Showing{" "}
+                    {artifacts[selectedArtifactIndex].data_samples.length} of{" "}
+                    {artifacts[selectedArtifactIndex].row_count} rows
+                  </div>
+</div>
                 </div>
               </ScrollArea>
             </TabsContent>
             <TabsContent value="query" className="h-full m-0">
               <ScrollArea className="h-full p-4">
-                <div className="bg-muted rounded-md p-4">
-                  <pre className="text-sm">
-                    <code className="overflow-x-scroll text-wrap">{artifact.sql_query}</code>
-                  </pre>
+                <div className="relative bg-muted rounded-md p-4">
+                  {/* Copy Button */}
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="absolute curson-pointer top-2 right-2 h-6 w-6 text-muted-foreground hover:text-foreground"
+                    onClick={() => {
+                      navigator.clipboard.writeText(
+                        artifacts[selectedArtifactIndex].sql_query || "",
+                      );
+                      toast.success("SQL copied!"); // Optional feedback
+                    }}
+                  >
+                    <Copy className="h-4 w-4" />
+                  </Button>
+
+                  {/* SQL Syntax Highlighter */}
+                  <SyntaxHighlighter
+                    language="sql"
+                    style={oneDark}
+                    lineProps={{
+                      style: { wordBreak: "break-all", whiteSpace: "pre-wrap" },
+                    }}
+                    wrapLines
+                    customStyle={{
+                      background: "transparent",
+                      padding: 0,
+                      margin: 0,
+                      fontSize: "0.875rem", // optional tweak for readability
+                    }}
+                    PreTag="div" // Enable line wrapping properly
+                  >
+                    {artifacts[selectedArtifactIndex].sql_query}
+                  </SyntaxHighlighter>
                 </div>
               </ScrollArea>
-            </TabsContent>
+            </TabsContent>{" "}
           </div>
         </Tabs>
       </div>

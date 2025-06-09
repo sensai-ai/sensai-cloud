@@ -14,7 +14,7 @@ export default function Layout() {
 }
   useEffect(() => {
     fetchLatestConvoId() 
-})
+},[])
   return (
     <div>
       <Sidebar />

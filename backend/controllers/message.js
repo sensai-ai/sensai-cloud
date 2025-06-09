@@ -70,60 +70,65 @@ export async function sendPromptToAi(req, res) {
     const schemaContext = generateSchemaContext(schema);
 
     // 6. Generate SQL query from prompt
-    const { query, queryExplanation,title } = await generateSQLFromPrompt(
+    const { query, queryExplanation, title } = await generateSQLFromPrompt(
       prompt,
       schemaContext,
     );
-
     await updateConversationTitle(conversationId, title);
     // 7. Execute the generated query
-    const queryResult = await executeQuery(query);
-    const formattedResults = formatQueryResults(queryResult);
+    let artifact;
+    let formattedResults;
+    if (query !== "") {
+      const queryResult = await executeQuery(query);
+      formattedResults = formatQueryResults(queryResult);
 
-    // 8. Determine best visualization types
-    // 9. Create artifact for this query with multiple visualizations
-    const { data: artifact, error: artifactError } = await supabase
-      .from("artifacts")
-      .insert([
-        {
-          name: `Analysis: ${truncatePreview(prompt, 30)}`,
-          description: queryExplanation,
-          sql_query: query,
-          visualization_type: ["bar"],
-          conversation_id: conversationId,
+      // 8. Determine best visualization types
+      // 9. Create artifact for this query with multiple visualizations
+      const { data, error: artifactError } = await supabase
+        .from("artifacts")
+        .insert([
+          {
+            name: `Analysis: ${truncatePreview(prompt, 30)}`,
+            description: queryExplanation,
+            sql_query: query,
+            visualization_type: ["bar"],
+            conversation_id: conversationId,
+            columns: formattedResults.columns,
+            data_samples: formattedResults.sampleData,
+            last_run_at: new Date().toISOString(),
+            row_count: formattedResults.rowCount,
+          },
+        ])
+        .select()
+        .single();
+
+      if (artifactError) throw artifactError;
+
+      artifact = data;
+      // First send the data results with visualization suggestions
+      res.write(
+        `data: ${JSON.stringify({
+          artifactId: artifact.id,
           columns: formattedResults.columns,
-          data_samples: formattedResults.sampleData,
-          last_run_at: new Date().toISOString(),
-          row_count: formattedResults.rowCount,
-        },
-      ])
-      .select()
-      .single();
-
-    if (artifactError) throw artifactError;
+          data: formattedResults.sampleData,
+          visualizationTypes: ["table", "bar"], // Array of suggested visualization types
+          sql_query: query,
+        })}\n\n`,
+      );
+    }
 
     // 10. Generate natural language response
     const aiResponse = await generateAIResponse(
       prompt,
       query,
       formattedResults,
+      conversationId
     );
 
     // 11. Stream the response to client
     let fullResponse = "";
     let chunkCount = 0;
     const updateInterval = 3;
-
-    // First send the data results with visualization suggestions
-    res.write(
-      `data: ${JSON.stringify({
-        artifactId: artifact.id,
-        columns: formattedResults.columns,
-        data: formattedResults.sampleData,
-        visualizationTypes: ["table", "bar"], // Array of suggested visualization types
-        sql_query:query
-      })}\n\n`,
-    );
 
     // Then stream the text response
     for (let i = 0; i < aiResponse.length; i += 20) {
@@ -142,7 +147,7 @@ export async function sendPromptToAi(req, res) {
           chunkCount,
           {
             ...metadata,
-            artifact_id: artifact.id,
+            artifact_id: artifact?.id || undefined,
           },
           false,
         );
@@ -158,7 +163,7 @@ export async function sendPromptToAi(req, res) {
       chunkCount,
       {
         ...metadata,
-        artifact_id: artifact.id,
+        artifact_id: artifact?.id || undefined,
       },
       true,
     );
@@ -222,7 +227,6 @@ function determineVisualizations(columns) {
 
 // Modified formatQueryResults to include type detection
 function formatQueryResults(data) {
-
   if (!data || data.length === 0) {
     return {
       columns: [],
@@ -233,7 +237,7 @@ function formatQueryResults(data) {
 
   // Detect column types from first row
   const firstRow = data[0];
-  const columns = Object.keys(firstRow)
+  const columns = Object.keys(firstRow);
   return {
     columns,
     sampleData: data,
@@ -266,7 +270,7 @@ function generateSchemaContext(schema) {
 
 async function generateSQLFromPrompt(prompt, schemaContext) {
   const systemPrompt = `
-You are a SQL query generator. Given a user prompt and a database schema, you generate a SQL query and explain it. Also provide a title that can be displayed for this conversation. The query should return the same field name no matter the relations its querying from. Dont include the "id" field in the results.
+You are a SQL query generator. Given a user prompt and a database schema, you generate a SQL query and explain it. Also provide a title that can be displayed for this conversation. The query should return the same field name no matter the relations its querying from. Dont include the "id" field in the results. If you get a prompt like "Hello" or "How are you?" or anything prompt which is not related to querying or asking about something that could be stored in a database data then you must return the "query" field as an empty string.
 Respond in this JSON format:
 {
   "query": "...",
@@ -306,20 +310,36 @@ async function executeQuery(query) {
   return data;
 }
 
-async function generateAIResponse(prompt, query, results) {
+async function generateAIResponse(prompt, query, results, conversationId) {
   // In production, you would call an AI service here
   const systemPrompt =
-    "You are an ai chatbot that reads what the user has found and provides a summary acting like you found it. Dont mention 'id' field.";
+    "You are an ai chatbot that reads what the user has found and provides a summary acting like you found it. Dont mention 'id' field. Also if you recieve 'No Query' in the start of the prompt just give a normal AI response";
+  let userMessage;
+  if (query !== "")
+    userMessage =
+      `I found ${results?.rowCount} results for "${prompt}". Here's what I discovered:\n\n` +
+      `I used this SQL query: \`${query}\`\n\n` +
+      `The results show ${results?.rowCount} records matching your request.` +
+      `Here are the results: ${JSON.stringify(results?.sampleData)}`;
+  else userMessage = `No Query. Prompt "${prompt}"`;
 
-  const userMessage =
-    `I found ${results.rowCount} results for "${prompt}". Here's what I discovered:\n\n` +
-    `I used this SQL query: \`${query}\`\n\n` +
-    `The results show ${results.rowCount} records matching your request.` +
-    `Here are the results: ${JSON.stringify(results.sampleData)}`;
+  // Get prev messages for context
+  const { data: messagesFromDb, error } = await supabase
+    .from("messages")
+    .select("content,is_from_user")
+    .eq("conversation_id", conversationId);
+  console.log({ messagesFromDb });
+  let parsedContext;
+  if (messagesFromDb)
+    parsedContext = messagesFromDb.map((msg) => ({
+      role: msg.is_from_user ? "user" : "system",
+      content: msg.content,
+    }));
 
   const response = await openai.chat.completions.create({
     model: "gpt-4", // or "gpt-3.5-turbo"
     messages: [
+      ...(parsedContext ? parsedContext : []),
       { role: "system", content: systemPrompt },
       { role: "user", content: userMessage },
     ],

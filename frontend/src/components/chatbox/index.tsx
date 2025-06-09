@@ -1,14 +1,14 @@
 import { useState, useRef, useEffect } from "react";
-import { Send, Bot, User, Plus, X } from "lucide-react";
+import { Send, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Card } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
-import { useOutletContext, useParams } from "react-router-dom";
+import { useNavigate, useOutletContext, useParams } from "react-router-dom";
 import { getMessagesByConversationId } from "@/lib/services/messages";
 import { Artifact, type ArtifactData } from "./Artifact";
 import { getArtifactsByConversationId } from "@/lib/services/artifacts";
+import AgentSelector from "./AgentSelector";
 
 type Message = {
   id: string;
@@ -18,7 +18,15 @@ type Message = {
   sql_query?: string;
 };
 
-export function ChatPage() {
+function Spinner() {
+  return (
+    <div className="flex justify-center items-center h-24">
+      <div className="animate-spin rounded-full h-6 w-6 border-2 border-muted dark:border-b-white dark:border-l-white dark:border-r-white  border-t-transparent" />
+    </div>
+  );
+}
+
+export function ChatPage({ isNewChat = false }: { isNewChat: boolean }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -27,13 +35,17 @@ export function ChatPage() {
     useState<Message | null>(null);
   const { conversationId } = useParams();
   const [messagesLoading, setMessagesLoading] = useState<boolean>(false);
-  const [currentArtifact, setCurrentArtifact] = useState<ArtifactData | null>(
+  const [currentArtifact, setCurrentArtifact] = useState<ArtifactData[] | null>(
     null,
   );
+  const [showArtifact, setShowArtifact] = useState<boolean>(false);
+  const [streamComplete, setStreamComplete] = useState<boolean>(true);
+
+  const navigate = useNavigate();
 
   const { fetchChatHistory } = useOutletContext<any>();
 
-// fetch All the chat data when the conversationID param changes
+  // fetch All the chat data when the conversationID param changes
   const fetchData = async () => {
     setMessagesLoading(true);
     const data = await getMessagesByConversationId(conversationId || "");
@@ -42,16 +54,19 @@ export function ChatPage() {
     );
     setMessagesLoading(false);
     setMessages(data.messages);
-    setCurrentArtifact(artifactsData.artifacts[0]);
+    setCurrentArtifact(artifactsData.artifacts);
   };
 
-    useEffect(() => {
-    setMessages([])
-    fetchData();
-    
-  }, [conversationId]);
-
-  // Auto-scroll to bottom
+  useEffect(() => {
+    setMessages([]);
+    setCurrentArtifact([]);
+    if (isNewChat) {
+      setCurrentArtifact(null);
+    }
+    if (!isNewChat && conversationId) {
+      fetchData();
+    }
+  }, [conversationId, isNewChat]); // Auto-scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, currentStreamingMessage]);
@@ -70,30 +85,51 @@ export function ChatPage() {
     setMessages((prev) => [...prev, userMessage]);
     setInput("");
     setIsLoading(true);
-
+    setCurrentStreamingMessage({
+      id: "",
+      content: "",
+      is_from_user: false,
+      created_at: new Date(),
+    });
+    setStreamComplete(false);
     try {
-      // Create a placeholder for the AI response
-      const aiMessagePlaceholder: Message = {
-        id: "",
-        content: "",
-        is_from_user: false,
-        created_at: new Date(),
-      };
-      setCurrentStreamingMessage(aiMessagePlaceholder);
+      let currentConversationId = conversationId;
 
+      // ✅ If new chat, create it now
+      if (isNewChat) {
+        const res = await fetch(
+          `${import.meta.env.VITE_API_URL}conversations`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ initialTitle: "New Chat" }),
+          },
+        );
+
+        const data = await res.json();
+        if (!res.ok)
+          throw new Error(
+            data.error?.message || "Failed to create conversation",
+          );
+        currentConversationId = data.id;
+      }
+
+      // ✅ Continue with message streaming as before
       const response = await fetch(
-        `${import.meta.env.VITE_API_URL}messages/${conversationId}/send`,
+        `${import.meta.env.VITE_API_URL}messages/${currentConversationId}/send`,
         {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ prompt: input }),
+          body: JSON.stringify({ prompt: userMessage.content }),
         },
       );
 
-      if (!response.ok) throw new Error("Network response was not ok");
-      if (!response.body) throw new Error("No response body");
+      if (!response.ok || !response.body)
+        throw new Error("Bad streaming response");
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let aiMessageContent = "";
@@ -110,39 +146,57 @@ export function ChatPage() {
             const data = line.replace("data: ", "");
             if (data === "[DONE]") break;
 
-            try {
-              const parsed = JSON.parse(data);
-              // Handle artifact data
-              if (parsed.artifactId) {
-                // You would fetch the full artifact data here
-                const artifactData: ArtifactData = {
-                  id: parsed.artifactId,
-                  name: `Analysis: ${input.substring(0, 30)}...`,
-                  description: "Generated from your query",
-                  sql_query: parsed.sql_query || "",
-                  columns: parsed.columns || [],
-                  data_samples: parsed.data || [],
-                  visualization_type: parsed.visualizationTypes || ["table"],
-                  row_count: parsed.data?.length || 0,
-                };
-                setCurrentArtifact(artifactData);
-              }
+            const parsed = JSON.parse(data);
+            aiMessageContent += parsed.content || "";
 
-              aiMessageContent += parsed.content || "";
-
-              setCurrentStreamingMessage({
-                id: Date.now(),
-                content: aiMessageContent,
-                is_from_user: false,
-                created_at: new Date(parsed.created_at),
-                ...(parsed.sql_query && { sql_query: parsed.sql_query }),
-              });
-            } catch (err) {
-              console.error("Error parsing chunk:", err);
+            setCurrentStreamingMessage({
+              id: Date.now().toString(),
+              content: aiMessageContent,
+              is_from_user: false,
+              created_at: new Date(parsed.created_at),
+              ...(parsed.sql_query && { sql_query: parsed.sql_query }),
+            });
+            setIsLoading(false);
+            if (parsed.artifactId) {
+              setCurrentArtifact((prev) =>
+                prev
+                  ? [
+                    ...prev,
+                    {
+                      id: parsed.artifactId,
+                      name: `Analysis: ${userMessage.content.slice(0, 30)}...`,
+                      description: "Generated from your query",
+                      sql_query: parsed.sql_query || "",
+                      columns: parsed.columns || [],
+                      data_samples: parsed.data || [],
+                      visualization_type: parsed.visualizationTypes || [
+                        "table",
+                      ],
+                      row_count: parsed.data?.length || 0,
+                    },
+                  ]
+                  : [
+                    {
+                      id: parsed.artifactId,
+                      name: `Analysis: ${userMessage.content.slice(0, 30)}...`,
+                      description: "Generated from your query",
+                      sql_query: parsed.sql_query || "",
+                      columns: parsed.columns || [],
+                      data_samples: parsed.data || [],
+                      visualization_type: parsed.visualizationTypes || [
+                        "table",
+                      ],
+                      row_count: parsed.data?.length || 0,
+                    },
+                  ],
+              );
+              setShowArtifact(true);
             }
           }
         }
       }
+      if (isNewChat) navigate(`/${currentConversationId}`);
+
       await fetchChatHistory();
     } catch (error) {
       console.error("Error:", error);
@@ -156,163 +210,125 @@ export function ChatPage() {
         },
       ]);
     } finally {
-      setIsLoading(false);
+      setStreamComplete(true);
     }
   };
-
   // When streaming completes, add the message to the main list
   useEffect(() => {
-    if (!isLoading && currentStreamingMessage) {
+    if (streamComplete && currentStreamingMessage) {
       setMessages((prev) => [...prev, currentStreamingMessage]);
       setCurrentStreamingMessage(null);
     }
-  }, [isLoading, currentStreamingMessage]);
+  }, [streamComplete, currentStreamingMessage]);
 
   return (
-    <div className="flex flex-col h-screen bg-background dark:bg-black/60">
-      {/* Main chat area with artifact sidebar */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* Chat area */}
-        <div
-          className={`flex-1 overflow-hidden p-4 ${currentArtifact ? "hidden md:block" : ""}`}
-        >
-          <ScrollArea className="h-full">
-            <div className="space-y-4">
-              {messagesLoading && (
-                <div className="space-y-4">
-                  {Array.from({ length: 1 }).map((_, idx) => (
-                    <div key={idx} className="flex justify-start">
-                      <Card className="max-w-3xl p-4">
-                        <div className="flex items-start gap-3">
-                          <div className="space-y-2 flex-1">
-                            <Skeleton className="h-4 w-[200px]" />
-                            <Skeleton className="h-4 w-[180px]" />
-                          </div>
-                        </div>
-                      </Card>
-                    </div>
-                  ))}
-                </div>
-              )}{" "}
-              {messages.map((message) => (
-                <MessageBubble key={message.id} message={message} />
-              ))}
-              {currentStreamingMessage && (
-                <MessageBubble message={currentStreamingMessage} />
-              )}
-              {isLoading && !currentStreamingMessage && (
-                <div className="flex justify-start">
-                  <Card className="max-w-3xl p-4">
-                    <div className="flex items-start gap-3">
-                      <div className="space-y-2 flex-1">
-                        <Skeleton className="h-4 w-[200px]" />
-                        <Skeleton className="h-4 w-[180px]" />
-                      </div>
-                    </div>
-                  </Card>
-                </div>
-              )}
-              <div ref={messagesEndRef} />
-            </div>
-          </ScrollArea>
-        </div>
-
-        {/* Artifact pane - only shown when there's an artifact */}
-        {currentArtifact && (
-          <div className="w-full md:w-1/2 lg:w-1/3 xl:w-1/3 border-l">
-            <Artifact
-              artifact={currentArtifact}
-              onClose={() => setCurrentArtifact(null)}
-            />
+    <div className="flex">
+      {" "}
+      <div className="flex flex-col w-full h-screen bg-background dark:bg-black/60">
+        {/* Main chat area with artifact sidebar */}
+        <div className="flex flex-1 overflow-hidden">
+          {/* Chat area */}
+          <div
+            className={`flex-1 overflow-hidden p-4 ${currentArtifact?.length ? "hidden md:block" : ""}`}
+          >
+            <ScrollArea className="h-full">
+              <div className="space-y-4">
+                {messagesLoading && <Spinner />}{" "}
+                {messages.map((message) => (
+                  <MessageBubble
+                    key={message.id}
+                    message={message}
+                    messagesLoading={false}
+                  />
+                ))}
+                {currentStreamingMessage && (
+                  <MessageBubble
+                    message={currentStreamingMessage}
+                    messagesLoading={isLoading}
+                  />
+                )}
+                <div ref={messagesEndRef} />
+              </div>
+            </ScrollArea>
           </div>
+        </div>
+        {/* Input area */}
+        <div className="border-t rounded-xl w-[60%] min-w-[300px] max-w-[747px] mx-auto mb-4 bg-card p-4">
+          <form onSubmit={handleSubmit} className="space-y-2">
+            {/* Input field and submit button */}
+            <div className="flex gap-2">
+              <Input
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder="Ask about your data..."
+                className="flex-1"
+                disabled={isLoading}
+              />
+            </div>
+
+            {/* Selected agents row */}
+            <div className="flex items-center mt-3 gap-2">
+              <AgentSelector />
+              <Button
+                type="submit"
+                disabled={isLoading || !input.trim()}
+                className="h-10 ml-auto"
+              >
+                <Send className="h-4 w-4" />
+              </Button>
+            </div>
+          </form>
+        </div>
+        {!showArtifact && currentArtifact?.length !== (0 || null) && (
+          <Button
+            className="absolute bottom-5 right-5 cursor-pointer"
+            onClick={() => setShowArtifact(true)}
+          >
+            Show Artifact
+          </Button>
         )}
       </div>
-      {/* Input area */}
-      <div className="border-t bg-card p-4">
-        <form onSubmit={handleSubmit} className="space-y-2">
-          {/* Input field and submit button */}
-          <div className="flex gap-2">
-            <Input
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Ask about your data..."
-              className="flex-1"
-              disabled={isLoading}
-            />
-          </div>
-
-          {/* Selected agents row */}
-          <div className="flex gap-2">
-            <Button variant="ghost" size="sm" className="h-8">
-              <Plus className="h-4 w-4 mr-2" />
-              Add Agent
-            </Button>
-
-            <div className="flex flex-wrap items-center gap-2">
-              {[
-                { id: "1", name: "Data Analyst" },
-                { id: "2", name: "SQL Expert" },
-                { id: "3", name: "Visualization" },
-              ].map((agent) => (
-                <div
-                  key={agent.id}
-                  className="flex items-center gap-1 bg-secondary rounded-full px-3 py-1 text-sm text-secondary-foreground"
-                >
-                  <span>{agent.name}</span>
-                  <button
-                    type="button"
-                    className="text-muted-foreground hover:text-destructive"
-                    onClick={() => console.log("Remove agent", agent.id)}
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </div>
-              ))}
-            </div>
-
-            <Button
-              type="submit"
-              disabled={isLoading || !input.trim()}
-              className="h-10 ml-auto"
-            >
-              <Send className="h-4 w-4" />
-            </Button>
-          </div>
-        </form>
-      </div>
+      {/* Artifact pane - only shown when there's an artifact */}
+      {currentArtifact?.length && showArtifact ? (
+        <Artifact
+          artifacts={currentArtifact}
+          onClose={() => {
+            setShowArtifact(false);
+          }}
+        />
+      ) : (
+        ""
+      )}
     </div>
   );
 }
 
 // Separate component for message bubbles
-function MessageBubble({ message }: { message: Message }) {
+function MessageBubble({
+  message,
+  messagesLoading,
+}: {
+  message: Message;
+  messagesLoading: boolean;
+}) {
   return (
     <div
       className={`flex ${message.is_from_user ? "justify-end" : "justify-start"}`}
     >
-      <Card
-        className={`max-w-3xl p-4 ${message.is_from_user
-            ? "bg-primary text-primary-foreground"
-            : "bg-card text-card-foreground border"
-          }`}
-      >
-        <div className="flex items-start gap-3">
-          <div className="mt-1">
-            {message.is_from_user && <User className="h-5 w-5" />}
-          </div>
-          <div className="flex-1">
-            {message.content === "" ? (
-              <div className="flex justify-start">
-                <Card className="max-w-3xl p-4">
-                  <div className="flex items-start gap-3">
-                    <div className="space-y-2 flex-1">
-                      <Skeleton className="h-4 w-[200px]" />
-                      <Skeleton className="h-4 w-[180px]" />
-                    </div>
-                  </div>
-                </Card>
-              </div>
-            ) : (
+      {messagesLoading ? (
+        <Spinner />
+      ) : (
+        <Card
+          className={`max-w-3xl p-4 ${message.is_from_user
+              ? "bg-primary text-primary-foreground"
+              : "bg-card text-card-foreground border"
+            }`}
+        >
+          <div className="flex items-start gap-3">
+            <div className="mt-1">
+              {message.is_from_user && <User className="h-5 w-5" />}
+            </div>
+            <div className="flex-1">
               <div>
                 <div className="whitespace-pre-wrap">{message.content}</div>
                 {message.sql_query && (
@@ -320,14 +336,11 @@ function MessageBubble({ message }: { message: Message }) {
                     <code className="font-mono">{message.sql_query}</code>
                   </pre>
                 )}
-                <div className="text-xs text-muted-foreground mt-1">
-                  {message.created_at.toLocaleString()}
-                </div>
               </div>
-            )}
+            </div>
           </div>
-        </div>
-      </Card>
+        </Card>
+      )}
     </div>
   );
 }
