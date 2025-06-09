@@ -50,7 +50,7 @@ const AgentSelector: React.FC = () => {
   }, [showDropdown]);
 
   return (
-    <div className="relative inline-block w-full max-w-sm">
+    <div className="absolute bottom-5">    <div className="relative inline-block w-full max-w-sm">
       {/* Button + Tags */}
       <div className="flex gap-2 flex-wrap">
         <Button
@@ -108,6 +108,8 @@ const AgentSelector: React.FC = () => {
         </div>
       )}
     </div>
+</div>
+
   );
 };
 

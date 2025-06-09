@@ -253,7 +253,7 @@ export function ChatPage({ isNewChat = false }: { isNewChat: boolean }) {
           </div>
         </div>
         {/* Input area */}
-        <div className="border-t rounded-xl w-[60%] min-w-[300px] max-w-[747px] mx-auto mb-4 bg-card p-4">
+        <div className="border-t relative rounded-xl w-[60%] min-w-[300px] max-w-[747px] mx-auto mb-4 bg-card p-4">
           <form onSubmit={handleSubmit} className="space-y-2">
             {/* Input field and submit button */}
             <div className="flex gap-2">
@@ -268,7 +268,6 @@ export function ChatPage({ isNewChat = false }: { isNewChat: boolean }) {
 
             {/* Selected agents row */}
             <div className="flex items-center mt-3 gap-2">
-              <AgentSelector />
               <Button
                 type="submit"
                 disabled={isLoading || !input.trim()}
@@ -278,6 +277,7 @@ export function ChatPage({ isNewChat = false }: { isNewChat: boolean }) {
               </Button>
             </div>
           </form>
+          <AgentSelector />
         </div>
         {!showArtifact && currentArtifact?.length !== (0 || null) && (
           <Button
